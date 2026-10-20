@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Borderless, non-activating panel that floats at Dock level on every Space.
+/// Borderless, non-activating panel that floats just above Apple's Dock on every Space.
 final class DockPanel: NSPanel {
     init() {
         super.init(contentRect: .zero,
@@ -9,7 +9,8 @@ final class DockPanel: NSPanel {
                    backing: .buffered,
                    defer: false)
         isFloatingPanel = true
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
+        // One above Apple's Dock, which can sit underneath (see AppleDock) and reorders itself on restart.
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         isOpaque = false
         backgroundColor = .clear
@@ -98,17 +99,29 @@ final class DockController {
     }
 
     private func layout() {
-        guard let screen = screen ?? NSScreen.screens.first else { return }
+        guard let screen = currentScreen() else { return }
         let f = screen.frame
         let w = ceil(contentSize.width), h = ceil(contentSize.height)
-        let shownY = f.minY + Self.bottomMargin
+        // When Apple's Dock reserves space underneath, line the bar's top up with where windows stop.
+        let barHeight = h - Self.headroom
+        let reserved = screen.visibleFrame.minY - f.minY
+        let shownY = f.minY + (reserved >= barHeight ? reserved - barHeight : Self.bottomMargin)
         let hiddenY = f.minY - h // fully below the edge
         let frame = NSRect(x: round(f.midX - w / 2), y: isShown ? shownY : hiddenY, width: w, height: h)
         panel.setFrame(frame, display: true)
     }
 
-    private func screenParametersChanged() {
-        if let s = screen, !NSScreen.screens.contains(s) { screen = NSScreen.screens.first }
+    /// The dock's screen, looked up again each time: a kept NSScreen can report a stale
+    /// visibleFrame after Apple's Dock restarts.
+    private func currentScreen() -> NSScreen? {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        let id = screen?.deviceDescription[key] as? NSNumber
+        screen = NSScreen.screens.first { $0.deviceDescription[key] as? NSNumber == id } ?? NSScreen.screens.first
+        return screen
+    }
+
+    /// Re-positions after Apple's Dock changes the space it reserves.
+    func screenParametersChanged() {
         layout()
     }
 

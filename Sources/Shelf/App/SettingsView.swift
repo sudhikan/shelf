@@ -44,7 +44,7 @@ private struct GeneralSettings: View {
                 Toggle("Hide Apple's Dock", isOn: $appleDockHidden)
                     .onChange(of: appleDockHidden) { _, on in AppleDock.setSuppressed(on) }
             } footer: {
-                Text("Sets Apple's Dock to auto-hide with a very long delay, and keeps it that way. Minimized windows go into their app's icon in Shelf. Turn this off to bring Apple's Dock back.")
+                Text("While Shelf stays visible, Apple's Dock sits hidden behind it so windows still stop above the dock. While Shelf auto-hides, Apple's Dock auto-hides with a very long delay. Minimized windows go into their app's icon in Shelf. Turn this off to bring Apple's Dock back as it was.")
                     .foregroundStyle(.secondary)
             }
         }

@@ -17,15 +17,30 @@ pkill -x Shelf 2>/dev/null
 sleep 1
 
 echo "Restoring Apple's Dock…"
-previous=$(defaults read "$LABEL" appleDockPreviousAutoHide 2>/dev/null || echo 0)
-defaults delete com.apple.dock autohide-delay 2>/dev/null
-if [[ "$previous" == 1 ]]; then
-  defaults write com.apple.dock autohide -bool true
+settings=$(defaults export "$LABEL" - 2>/dev/null)
+original() { plutil -extract "appleDockOriginal.$1" raw -o - - <<< "$settings" 2>/dev/null; }
+if original_type=$(plutil -type appleDockOriginal - <<< "$settings" 2>/dev/null) && [[ "$original_type" == dictionary ]]; then
+  # Put back each Dock setting Shelf changed, exactly as it was before Shelf.
+  for key in autohide static-only magnification minimize-to-application; do
+    if value=$(original "$key"); then defaults write com.apple.dock "$key" -bool "$value"
+    else defaults delete com.apple.dock "$key" 2>/dev/null; fi
+  done
+  for key in autohide-delay tilesize; do
+    if value=$(original "$key"); then defaults write com.apple.dock "$key" -float "$value"
+    else defaults delete com.apple.dock "$key" 2>/dev/null; fi
+  done
 else
-  defaults write com.apple.dock autohide -bool false
+  # Older Shelf builds only changed auto-hide.
+  previous=$(defaults read "$LABEL" appleDockPreviousAutoHide 2>/dev/null || echo 0)
+  defaults delete com.apple.dock autohide-delay 2>/dev/null
+  if [[ "$previous" == 1 ]]; then
+    defaults write com.apple.dock autohide -bool true
+  else
+    defaults write com.apple.dock autohide -bool false
+  fi
+  # Shelf turned on "minimize windows into application icon"; go back to the macOS default.
+  defaults delete com.apple.dock minimize-to-application 2>/dev/null
 fi
-# Shelf turned on "minimize windows into application icon"; go back to the macOS default.
-defaults delete com.apple.dock minimize-to-application 2>/dev/null
 killall Dock
 
 echo "Removing the app…"

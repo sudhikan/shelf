@@ -21,8 +21,11 @@ and import it into the login keychain.
 
 - Launches at login and restarts after a crash via `~/Library/LaunchAgents/local.shelf.app.plist`
   (written by the app; toggle in Settings).
-- Hides Apple's Dock by setting it to auto-hide with a 1000 s delay; turn off
-  "Hide Apple's Dock" in Settings to restore it.
+- Hides Apple's Dock. Only Apple's Dock can reserve space at the bottom of the screen, so while
+  Shelf stays visible, Apple's Dock stays on underneath it. It shows running apps only and is sized
+  to Shelf's height, so windows, zoom and tiling stop where Shelf starts. While Shelf auto-hides,
+  Apple's Dock auto-hides with a 1000 s delay instead. Turn off "Hide Apple's Dock" in Settings to
+  restore your original Dock settings.
 - Data lives in `~/Library/Application Support/Shelf` and the `local.shelf.app` defaults domain.
 
 ## Uninstall (go back to Apple's Dock)

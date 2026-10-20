@@ -2,51 +2,99 @@ import AppKit
 import Carbon.HIToolbox
 import ServiceManagement
 
-/// Hides Apple's Dock by making it auto-hide with a very long delay. Fully reversible.
+/// Keeps Apple's Dock out of sight. Fully reversible.
 /// The Dock process itself can't be removed: it also runs Mission Control, ⌘-Tab and Spaces.
+///
+/// Only Apple's Dock can reserve space at the bottom of the screen (NSScreen.visibleFrame),
+/// which is what makes windows, zoom and tiling stop above it. So when Shelf stays visible,
+/// Apple's Dock stays on too, trimmed to running apps and sized to Shelf's height, and Shelf
+/// sits on top of it. When Shelf auto-hides, Apple's Dock auto-hides with a very long delay instead.
 enum AppleDock {
-    private static let savedAutoHideKey = "appleDockPreviousAutoHide"
     /// The user's intent; Shelf re-applies it if something (⌥⌘D, System Settings) undoes it.
     static let keepHiddenKey = "keepAppleDockHidden"
+    /// The user's own values for the keys below, restored when Shelf lets go of Apple's Dock.
+    private static let originalKey = "appleDockOriginal"
+    private static let legacyAutoHideKey = "appleDockPreviousAutoHide"
+    private static let managedKeys = ["autohide", "autohide-delay", "static-only", "magnification",
+                                      "tilesize", "minimize-to-application"]
+    private static let domain = "com.apple.dock" as CFString
 
     private static func dockValue(_ key: String) -> Any? {
-        CFPreferencesAppSynchronize("com.apple.dock" as CFString)
-        return CFPreferencesCopyAppValue(key as CFString, "com.apple.dock" as CFString)
+        CFPreferencesCopyAppValue(key as CFString, domain)
     }
 
-    static var isSuppressed: Bool {
-        let delay = (dockValue("autohide-delay") as? NSNumber)?.doubleValue ?? 0
-        let autohide = (dockValue("autohide") as? NSNumber)?.boolValue ?? false
-        return autohide && delay >= 100
-    }
+    static var isSuppressed: Bool { UserDefaults.standard.bool(forKey: keepHiddenKey) }
 
     static func setSuppressed(_ suppressed: Bool) {
         UserDefaults.standard.set(suppressed, forKey: keepHiddenKey)
-        guard suppressed != isSuppressed else { return }
-        if suppressed {
-            if (dockValue("autohide-delay") as? NSNumber)?.doubleValue ?? 0 < 100 {
-                UserDefaults.standard.set((dockValue("autohide") as? NSNumber)?.boolValue ?? false, forKey: savedAutoHideKey)
+        apply()
+    }
+
+    /// Apple's Dock size whose reserved space just covers a Shelf bar of this tile size.
+    static func tileSize(forShelfTile tile: Double) -> Int { min(128, max(16, Int(tile) - 2)) }
+
+    /// Brings Apple's Dock settings in line with Shelf's, restarting the Dock only if something changed.
+    static func apply() {
+        CFPreferencesAppSynchronize(domain)
+        let desired: [String: Any]
+        if isSuppressed {
+            let original = saveOriginalIfNeeded()
+            var values = original
+            if UserDefaults.standard.autoHide {
+                values["autohide"] = true
+                values["autohide-delay"] = 1000.0
+            } else {
+                values["autohide"] = false
+                values["autohide-delay"] = nil
+                values["static-only"] = true // running apps only, so it stays narrower than Shelf
+                values["magnification"] = false
+                values["tilesize"] = tileSize(forShelfTile: UserDefaults.standard.tileSize)
             }
-            run(["write", "com.apple.dock", "autohide", "-bool", "true"])
-            run(["write", "com.apple.dock", "autohide-delay", "-float", "1000"])
             // Minimized windows go into their app's icon, which Shelf can bring back.
-            run(["write", "com.apple.dock", "minimize-to-application", "-bool", "true"])
+            values["minimize-to-application"] = true
+            desired = values
+        } else if let original = UserDefaults.standard.dictionary(forKey: originalKey) {
+            desired = original
+            UserDefaults.standard.removeObject(forKey: originalKey)
         } else {
-            let previous = UserDefaults.standard.bool(forKey: savedAutoHideKey)
-            run(["delete", "com.apple.dock", "autohide-delay"])
-            run(["write", "com.apple.dock", "autohide", "-bool", previous ? "true" : "false"])
+            return
         }
+
+        var changed = false
+        for key in managedKeys {
+            let current = dockValue(key) as? NSObject
+            let wanted = desired[key] as? NSObject
+            guard current != wanted else { continue }
+            CFPreferencesSetAppValue(key as CFString, wanted, domain)
+            changed = true
+        }
+        guard changed else { return }
+        CFPreferencesAppSynchronize(domain)
         restartDock()
     }
 
-    /// Checks every few seconds and re-hides Apple's Dock if it came back.
+    private static func saveOriginalIfNeeded() -> [String: Any] {
+        if let saved = UserDefaults.standard.dictionary(forKey: originalKey) { return saved }
+        var original: [String: Any] = [:]
+        for key in managedKeys { original[key] = dockValue(key) }
+        // Older Shelf builds hid the Dock and only remembered the auto-hide setting.
+        if let legacy = UserDefaults.standard.object(forKey: legacyAutoHideKey) as? Bool {
+            original["autohide"] = legacy
+            original["autohide-delay"] = nil
+            original["minimize-to-application"] = nil
+            UserDefaults.standard.removeObject(forKey: legacyAutoHideKey)
+        }
+        UserDefaults.standard.set(original, forKey: originalKey)
+        return original
+    }
+
+    /// Checks every few seconds and re-applies if something (or a Shelf setting) changed.
     static func startEnforcing() {
         Task {
             while !Task.isCancelled {
-                if UserDefaults.standard.bool(forKey: keepHiddenKey), !isSuppressed {
-                    setSuppressed(true)
-                }
-                try? await Task.sleep(for: .seconds(5))
+                apply()
+                DockController.shared.screenParametersChanged()
+                try? await Task.sleep(for: .seconds(2))
             }
         }
     }
@@ -56,14 +104,6 @@ enum AppleDock {
         killall.executableURL = URL(filePath: "/usr/bin/killall")
         killall.arguments = ["Dock"]
         try? killall.run()
-    }
-
-    private static func run(_ args: [String]) {
-        let process = Process()
-        process.executableURL = URL(filePath: "/usr/bin/defaults")
-        process.arguments = args
-        try? process.run()
-        process.waitUntilExit()
     }
 }
 
