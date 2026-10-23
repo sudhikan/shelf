@@ -21,14 +21,20 @@ settings=$(defaults export "$LABEL" - 2>/dev/null)
 original() { plutil -extract "appleDockOriginal.$1" raw -o - - <<< "$settings" 2>/dev/null; }
 if original_type=$(plutil -type appleDockOriginal - <<< "$settings" 2>/dev/null) && [[ "$original_type" == dictionary ]]; then
   # Put back each Dock setting Shelf changed, exactly as it was before Shelf.
-  for key in autohide static-only magnification minimize-to-application; do
+  for key in autohide minimize-to-application; do
     if value=$(original "$key"); then defaults write com.apple.dock "$key" -bool "$value"
     else defaults delete com.apple.dock "$key" 2>/dev/null; fi
   done
-  for key in autohide-delay tilesize; do
-    if value=$(original "$key"); then defaults write com.apple.dock "$key" -float "$value"
-    else defaults delete com.apple.dock "$key" 2>/dev/null; fi
-  done
+  if value=$(original autohide-delay); then defaults write com.apple.dock autohide-delay -float "$value"
+  else defaults delete com.apple.dock autohide-delay 2>/dev/null; fi
+  # A build that predates appleDockLayoutRestored also changed these; put them back too.
+  if [[ "$(defaults read "$LABEL" appleDockLayoutRestored 2>/dev/null)" != 1 ]]; then
+    for key in static-only magnification; do
+      if value=$(original "$key"); then defaults write com.apple.dock "$key" -bool "$value"
+      elif [[ "$key" == static-only ]]; then defaults delete com.apple.dock "$key" 2>/dev/null; fi
+    done
+    if value=$(original tilesize); then defaults write com.apple.dock tilesize -float "$value"; fi
+  fi
 else
   # Older Shelf builds only changed auto-hide.
   previous=$(defaults read "$LABEL" appleDockPreviousAutoHide 2>/dev/null || echo 0)

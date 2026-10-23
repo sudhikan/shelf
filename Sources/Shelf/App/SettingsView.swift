@@ -18,6 +18,7 @@ private struct GeneralSettings: View {
     @AppStorage(SettingsKey.appZoom) private var appZoom = SettingsDefault.appZoom
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var appleDockHidden = AppleDock.isSuppressed
+    @State private var windowFenceAllowed = WindowFence.isTrusted
 
     var body: some View {
         Form {
@@ -30,13 +31,29 @@ private struct GeneralSettings: View {
                     Slider(value: $appZoom, in: 1.2...2.2) { Text("Zoom amount") }
                 }
                 Picker("App rows", selection: $appRows) {
-                    Text("1 row · 8 apps").tag(1)
-                    Text("2 rows · 10 smaller apps").tag(2)
+                    Text("1 row").tag(1)
+                    Text("2 rows · smaller apps").tag(2)
                 }
             }
             Section("Behavior") {
                 Toggle("Automatically hide and show the dock", isOn: $autoHide)
                 LabeledContent("Show dock", value: "Move pointer to bottom edge or press ⌃⌥D")
+                LabeledContent("Keep windows above the dock") {
+                    if windowFenceAllowed {
+                        Text("On").foregroundStyle(.secondary)
+                    } else {
+                        Button("Allow Accessibility…") { WindowFence.requestAccess() }
+                    }
+                }
+                .help("While the dock stays visible, windows that are opened, resized, zoomed or tiled under it are trimmed to end at its top edge.")
+                // Posted when any app's Accessibility permission changes; the new state lands just after.
+                .onReceive(DistributedNotificationCenter.default()
+                    .publisher(for: Notification.Name("com.apple.accessibility.api"))) { _ in
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        windowFenceAllowed = WindowFence.isTrusted
+                    }
+                }
                 Toggle("Launch Shelf at login (and restart it if it crashes)", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in LaunchAtLogin.set(on) }
             }
@@ -44,7 +61,7 @@ private struct GeneralSettings: View {
                 Toggle("Hide Apple's Dock", isOn: $appleDockHidden)
                     .onChange(of: appleDockHidden) { _, on in AppleDock.setSuppressed(on) }
             } footer: {
-                Text("While Shelf stays visible, Apple's Dock sits hidden behind it so windows still stop above the dock. While Shelf auto-hides, Apple's Dock auto-hides with a very long delay. Minimized windows go into their app's icon in Shelf. Turn this off to bring Apple's Dock back as it was.")
+                Text("Apple's Dock auto-hides with a very long delay, so it never shows. Minimized windows go into their app's icon in Shelf. Turn this off to bring Apple's Dock back as it was.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -85,7 +102,7 @@ private struct ItemsSettings: View {
             } header: {
                 Text("Apps")
             } footer: {
-                Text("Up to \(DockStore.maxApps) apps (change rows in General); the rest of the dock is for widgets. Running apps that aren't kept fill any free app slots.")
+                Text("Up to \(DockStore.maxApps) kept apps (change rows in General). Running apps that aren't kept are always shown after them; the dock grows to fit, and icons shrink if it would get wider than the screen.")
                     .foregroundStyle(.secondary)
             }
             Section("Widgets") {

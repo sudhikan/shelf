@@ -26,13 +26,15 @@ struct DockBar: View {
     static let appShare: CGFloat = 0.4
 
     var body: some View {
+        // Every running app gets an icon, however many kept apps there are.
+        // Kept apps beyond what the row setting shows count as unkept, so they still appear while running.
         let pinned = store.visiblePinnedApps
-        let unpinned = Array(RunningApps.shared.unpinned(excluding: store.config.pinnedApps)
-            .prefix(max(0, DockStore.maxApps - pinned.count)))
-        let (appsWidth, widgetsWidth) = areaWidths()
+        let apps = pinned.map { ($0, true) }
+            + RunningApps.shared.unpinned(excluding: pinned).map { ($0, false) }
+        let (appsWidth, widgetsWidth) = areaWidths(appCount: apps.count)
 
         HStack(alignment: .bottom, spacing: 2) {
-            AppSlots(apps: pinned.map { ($0, true) } + unpinned.map { ($0, false) }, width: appsWidth)
+            AppSlots(apps: apps, width: appsWidth)
             DockDivider()
             HStack(alignment: .bottom, spacing: 0) {
                 ForEach(store.config.widgets) { item in
@@ -74,16 +76,33 @@ struct DockBar: View {
         }
     }
 
-    /// Smallest bar where apps get 40% and widgets 60% and both still fit at their normal size.
-    private func areaWidths() -> (apps: CGFloat, widgets: CGFloat) {
-        let slots = CGFloat(AppSlots.slotCount(rows: appRows))
-        let appsNeeded = slots * AppSlots.minCellWidth(tileSize: tileSize, rows: appRows)
+    /// Smallest bar where apps get 40% and widgets 60% of the usual width, with apps beyond the
+    /// usual slots widening the apps' area by a slot each. If that's wider than the screen, the
+    /// widgets' spare room goes first, then the apps' area is squeezed and its icons shrink.
+    private func areaWidths(appCount: Int) -> (apps: CGFloat, widgets: CGFloat) {
+        let baseSlots = AppSlots.slotCount(rows: appRows)
+        let cellWidth = AppSlots.minCellWidth(tileSize: tileSize, rows: appRows)
+        let appsNeeded = CGFloat(baseSlots) * cellWidth
         let widgets = store.config.widgets
         let plusButton = tileSize * 0.55 + 4
         let widgetsNeeded = widgets.reduce(0) { $0 + (widgetWidths[$1.id] ?? 0) }
             + CGFloat(widgets.count) * 2 + plusButton
         let total = max(appsNeeded / Self.appShare, widgetsNeeded / (1 - Self.appShare))
-        return (floor(total * Self.appShare), ceil(total * (1 - Self.appShare)))
+        var apps = floor(total * Self.appShare) + CGFloat(max(0, appCount - baseSlots)) * cellWidth
+        var widgetsWidth = ceil(total * (1 - Self.appShare))
+
+        // Everything else in the bar: padding, dividers, folders and Trash (each tile + 4, spacing 2).
+        let endTiles = store.config.folders.count + (showTrash ? 1 : 0)
+        let rest = 12 + 2 * 13 + CGFloat(endTiles) * (tileSize + 6) + 8
+        let available = DockController.shared.maxWidth - 2 * DockController.sidePadding
+        let over = apps + widgetsWidth + rest - available
+        if over > 0 {
+            widgetsWidth -= min(over, max(0, widgetsWidth - ceil(widgetsNeeded)))
+            let stillOver = apps + widgetsWidth + rest - available
+            // Icons stop shrinking at 16 pt (a 22 pt slot).
+            if stillOver > 0 { apps = max(CGFloat(appCount) * 22, floor(apps - stillOver)) }
+        }
+        return (apps, widgetsWidth)
     }
 }
 
@@ -123,10 +142,11 @@ struct AddWidgetButton: View {
     }
 }
 
-/// App icons in fixed, evenly spaced slots across the apps' share of the bar.
-/// One row: 8 full-size slots. Two rows: a 10-slot zigzag — icons alternate low/high, so no
-/// icon sits directly above another and each can use most of the bar's height.
-/// Kept apps come first (left to right), then running apps that aren't kept.
+/// App icons in evenly spaced slots across the apps' share of the bar.
+/// One row: at least 8 full-size slots. Two rows: a zigzag of at least 10 — icons alternate
+/// low/high, so no icon sits directly above another and each can use most of the bar's height.
+/// Kept apps come first (left to right), then running apps that aren't kept. More apps than
+/// slots add slots; when the bar is squeezed to fit the screen, icons shrink to their slot.
 struct AppSlots: View {
     let apps: [(String, Bool)]
     let width: CGFloat
@@ -148,17 +168,17 @@ struct AppSlots: View {
     }
 
     var body: some View {
-        let slots = Self.slotCount(rows: appRows)
+        let slots = max(Self.slotCount(rows: appRows), apps.count)
         let cell = width / CGFloat(slots)
         let (zigIcon, rise) = Self.zigzag(tileSize: tileSize)
-        let icon = appRows == 2 ? min(zigIcon, cell - 4) : tileSize
+        let icon = appRows == 2 ? min(zigIcon, cell - 4) : min(tileSize, floor(cell - 6))
         HStack(alignment: .bottom, spacing: 0) {
             ForEach(0..<slots, id: \.self) { index in
                 let raised = appRows == 2 && index % 2 == 1
                 Group {
                     if index < apps.count {
                         AppTile(path: apps[index].0, pinned: apps[index].1,
-                                iconSize: appRows == 2 ? icon : nil)
+                                iconSize: icon < tileSize ? icon : nil)
                     } else {
                         Color.clear.frame(width: icon, height: icon)
                     }
@@ -265,6 +285,7 @@ struct AppTile: View {
                 .resizable()
                 .interpolation(.high)
                 .brightness(dropTargeted ? 0.15 : 0)
+                .opacity(running?.isHidden == true ? 0.5 : 1) // hidden apps look faded, like Apple's Dock
         }
         .gesture(DockEditor.holdToEditOrTap { AppActions.open(path) })
         .contextMenu { menu(running: running) }

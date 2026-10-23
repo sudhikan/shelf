@@ -21,11 +21,19 @@ and import it into the login keychain.
 
 - Launches at login and restarts after a crash via `~/Library/LaunchAgents/local.shelf.app.plist`
   (written by the app; toggle in Settings).
-- Hides Apple's Dock. Only Apple's Dock can reserve space at the bottom of the screen, so while
-  Shelf stays visible, Apple's Dock stays on underneath it. It shows running apps only and is sized
-  to Shelf's height, so windows, zoom and tiling stop where Shelf starts. While Shelf auto-hides,
-  Apple's Dock auto-hides with a 1000 s delay instead. Turn off "Hide Apple's Dock" in Settings to
-  restore your original Dock settings.
+- Hides Apple's Dock by making it auto-hide with a 1000 s delay (it can't sit visibly under Shelf:
+  it keeps tracking the mouse there and shows its own labels). Turn off "Hide Apple's Dock" in
+  Settings to restore your original Dock settings.
+- Keeps windows above Shelf while it stays visible. This needs Accessibility permission (Shelf asks
+  once; after that use the button in Settings): windows that are opened, resized, zoomed or tiled
+  under Shelf are trimmed to end at its top edge once they settle, and so are windows already under
+  it when Shelf appears or grows. Dragging a window down past Shelf is left alone. Zoomed and tiled
+  windows briefly fill the full height first, since only Apple's Dock can make macOS leave room.
+- Auto-hides on full-screen Spaces regardless of the setting; move the pointer to the bottom edge
+  to bring it up there. On displays with a notch, telling full screen apart from a zoomed window
+  needs Accessibility permission too.
+- Shows every running app, hidden ones faded. The bar grows to fit them; past the screen's width the
+  widgets' spare room goes first, then icons shrink.
 - Data lives in `~/Library/Application Support/Shelf` and the `local.shelf.app` defaults domain.
 
 ## Uninstall (go back to Apple's Dock)

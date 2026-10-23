@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LaunchAtLogin.enableByDefaultOnce()
         DockController.shared.start()
         AppleDock.startEnforcing()
+        WindowFence.shared.start()
         ClipboardService.shared.start()
         GlobalHotKey.register()
     }

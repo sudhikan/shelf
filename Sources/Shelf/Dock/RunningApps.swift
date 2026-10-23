@@ -71,7 +71,8 @@ enum AppActions {
         FileManager.default.displayName(atPath: path).trimmingSuffix(".app")
     }
 
-    /// Same behaviour as clicking in the Dock: launch, or activate + reopen.
+    /// Same behaviour as clicking in the Dock: launch, or activate + reopen
+    /// (activating unhides a hidden app; reopen brings back minimized windows).
     static func open(_ path: String) {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true

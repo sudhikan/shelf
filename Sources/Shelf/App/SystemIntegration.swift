@@ -2,21 +2,23 @@ import AppKit
 import Carbon.HIToolbox
 import ServiceManagement
 
-/// Keeps Apple's Dock out of sight. Fully reversible.
+/// Keeps Apple's Dock out of sight by making it auto-hide with a very long delay. Fully reversible.
 /// The Dock process itself can't be removed: it also runs Mission Control, ⌘-Tab and Spaces.
 ///
-/// Only Apple's Dock can reserve space at the bottom of the screen (NSScreen.visibleFrame),
-/// which is what makes windows, zoom and tiling stop above it. So when Shelf stays visible,
-/// Apple's Dock stays on too, trimmed to running apps and sized to Shelf's height, and Shelf
-/// sits on top of it. When Shelf auto-hides, Apple's Dock auto-hides with a very long delay instead.
+/// Apple's Dock is the only thing that can reserve space at the bottom of the screen, but it
+/// can't sit under Shelf: it keeps tracking the mouse through Shelf and shows its own labels.
+/// WindowFence keeps windows above Shelf instead.
 enum AppleDock {
     /// The user's intent; Shelf re-applies it if something (⌥⌘D, System Settings) undoes it.
     static let keepHiddenKey = "keepAppleDockHidden"
     /// The user's own values for the keys below, restored when Shelf lets go of Apple's Dock.
     private static let originalKey = "appleDockOriginal"
     private static let legacyAutoHideKey = "appleDockPreviousAutoHide"
-    private static let managedKeys = ["autohide", "autohide-delay", "static-only", "magnification",
-                                      "tilesize", "minimize-to-application"]
+    /// What Shelf changes in Apple's Dock; everything else is left to the user.
+    private static let managedKeys = ["autohide", "autohide-delay", "minimize-to-application"]
+    /// Earlier builds also changed these (to fit Apple's Dock under Shelf). Put back once.
+    private static let legacyLayoutKeys = ["static-only", "magnification", "tilesize"]
+    private static let restoredLayoutKey = "appleDockLayoutRestored"
     private static let domain = "com.apple.dock" as CFString
 
     private static func dockValue(_ key: String) -> Any? {
@@ -30,26 +32,16 @@ enum AppleDock {
         apply()
     }
 
-    /// Apple's Dock size whose reserved space just covers a Shelf bar of this tile size.
-    static func tileSize(forShelfTile tile: Double) -> Int { min(128, max(16, Int(tile) - 2)) }
-
     /// Brings Apple's Dock settings in line with Shelf's, restarting the Dock only if something changed.
     static func apply() {
         CFPreferencesAppSynchronize(domain)
+        var changed = restoreLegacyLayoutOnce()
         let desired: [String: Any]
         if isSuppressed {
             let original = saveOriginalIfNeeded()
             var values = original
-            if UserDefaults.standard.autoHide {
-                values["autohide"] = true
-                values["autohide-delay"] = 1000.0
-            } else {
-                values["autohide"] = false
-                values["autohide-delay"] = nil
-                values["static-only"] = true // running apps only, so it stays narrower than Shelf
-                values["magnification"] = false
-                values["tilesize"] = tileSize(forShelfTile: UserDefaults.standard.tileSize)
-            }
+            values["autohide"] = true
+            values["autohide-delay"] = 1000.0
             // Minimized windows go into their app's icon, which Shelf can bring back.
             values["minimize-to-application"] = true
             desired = values
@@ -57,10 +49,10 @@ enum AppleDock {
             desired = original
             UserDefaults.standard.removeObject(forKey: originalKey)
         } else {
+            if changed { restartDock() }
             return
         }
 
-        var changed = false
         for key in managedKeys {
             let current = dockValue(key) as? NSObject
             let wanted = desired[key] as? NSObject
@@ -71,6 +63,25 @@ enum AppleDock {
         guard changed else { return }
         CFPreferencesAppSynchronize(domain)
         restartDock()
+    }
+
+    /// Undoes an earlier build's layout changes from the saved originals. Returns whether it changed anything.
+    private static func restoreLegacyLayoutOnce() -> Bool {
+        guard !UserDefaults.standard.bool(forKey: restoredLayoutKey) else { return false }
+        UserDefaults.standard.set(true, forKey: restoredLayoutKey)
+        guard var original = UserDefaults.standard.dictionary(forKey: originalKey) else { return false }
+        var changed = false
+        // A key missing from the originals was unset before Shelf. Only "static-only" is safe to
+        // unset again: the user may have changed the others themselves in the meantime.
+        for key in legacyLayoutKeys where original.keys.contains(key) || key == "static-only" {
+            let wanted = original.removeValue(forKey: key) as? NSObject
+            if dockValue(key) as? NSObject != wanted {
+                CFPreferencesSetAppValue(key as CFString, wanted, domain)
+                changed = true
+            }
+        }
+        UserDefaults.standard.set(original, forKey: originalKey)
+        return changed
     }
 
     private static func saveOriginalIfNeeded() -> [String: Any] {
